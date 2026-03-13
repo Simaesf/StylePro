@@ -1,0 +1,5 @@
+recursive-include stylepro/editor/static *
+include stylepro/py.typed
+include README.md
+include pyproject.toml
+recursive-include examples *

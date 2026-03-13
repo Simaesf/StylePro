@@ -1,0 +1,96 @@
+/*
+ * stylepro/editor/static/editor.css
+ * -----------------------------------
+ * Styles for the StylePro overlay components.
+ * All rules live inside the Shadow DOM root except .sp-hovered,
+ * which is injected into the main document to highlight hovered elements.
+ *
+ * Full styles implemented in Phase 5 & 6.
+ */
+
+/* ---- Main-document hover ring (minimal footprint) ---- */
+.sp-hovered {
+  outline: 2px solid #6366f1 !important;
+  outline-offset: 2px !important;
+  cursor: crosshair !important;
+}
+
+/* ---- Everything below lives inside Shadow DOM ---- */
+
+/* Floating action button */
+.sp-fab {
+  position: fixed;
+  z-index: 2147483647;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #6366f1;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.sp-fab:hover {
+  background: #4f46e5;
+  transform: scale(1.08);
+}
+
+.sp-fab.sp-active {
+  background: #4338ca;
+}
+
+/* Edit overlay container */
+.sp-overlay {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2147483646;
+  box-sizing: border-box;
+}
+
+/* Resize handles — 8-point (corners + edges) */
+.sp-handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: #6366f1;
+  border: 1px solid #fff;
+  border-radius: 2px;
+  pointer-events: all;
+  box-sizing: border-box;
+}
+
+/* Handle positions — Phase 5 */
+.sp-handle[data-pos="nw"] { top: -4px;  left: -4px;  cursor: nw-resize; }
+.sp-handle[data-pos="n"]  { top: -4px;  left: calc(50% - 4px); cursor: n-resize;  }
+.sp-handle[data-pos="ne"] { top: -4px;  right: -4px; cursor: ne-resize; }
+.sp-handle[data-pos="e"]  { top: calc(50% - 4px); right: -4px; cursor: e-resize; }
+.sp-handle[data-pos="se"] { bottom: -4px; right: -4px; cursor: se-resize; }
+.sp-handle[data-pos="s"]  { bottom: -4px; left: calc(50% - 4px); cursor: s-resize; }
+.sp-handle[data-pos="sw"] { bottom: -4px; left: -4px;  cursor: sw-resize; }
+.sp-handle[data-pos="w"]  { top: calc(50% - 4px); left: -4px; cursor: w-resize; }
+
+/* Toast notification */
+.sp-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e1e2e;
+  color: #cdd6f4;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: system-ui, sans-serif;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  z-index: 2147483647;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.sp-toast.sp-toast--visible {
+  opacity: 1;
+}
