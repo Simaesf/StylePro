@@ -270,6 +270,71 @@
   };
 
   // =========================================================================
+  // LockedElements
+  // =========================================================================
+  // Per-element lock: locked elements are skipped in canvas edit mode.
+  // Lock state is stored in sessionStorage so it survives Streamlit reruns.
+
+  var LockedElements = {
+    _sessionKey: "sp_locked_elements",
+    _ids: null,
+
+    _load: function () {
+      if (this._ids !== null) return;
+      try {
+        var raw = sessionStorage.getItem(this._sessionKey);
+        this._ids = raw ? JSON.parse(raw) : [];
+      } catch (e) { this._ids = []; }
+    },
+
+    isLocked: function (el) {
+      if (!el || el === document.body) return false;
+      this._load();
+      var id = el.getAttribute("data-sp-id");
+      if (id && this._ids.indexOf(id) !== -1) return true;
+      // Also treat the element itself as locked if a parent is locked
+      var node = el.parentNode;
+      while (node && node !== document.body) {
+        var pid = node.getAttribute ? node.getAttribute("data-sp-id") : null;
+        if (pid && this._ids.indexOf(pid) !== -1) return true;
+        node = node.parentNode;
+      }
+      return false;
+    },
+
+    // Returns true if the element is now locked (after toggle).
+    toggle: function (el) {
+      this._load();
+      var id = ElementIdentifier.ensure(el);
+      var idx = this._ids.indexOf(id);
+      if (idx === -1) {
+        this._ids.push(id);
+        el.setAttribute("data-sp-locked", "true");
+      } else {
+        this._ids.splice(idx, 1);
+        el.removeAttribute("data-sp-locked");
+      }
+      this._persist();
+      return this._ids.indexOf(id) !== -1;
+    },
+
+    // Re-apply the data-sp-locked attribute on page load / rerun.
+    restoreVisuals: function () {
+      this._load();
+      this._ids.forEach(function (id) {
+        var el = document.querySelector("[data-sp-id='" + id + "']");
+        if (el) el.setAttribute("data-sp-locked", "true");
+      });
+    },
+
+    _persist: function () {
+      try {
+        sessionStorage.setItem(this._sessionKey, JSON.stringify(this._ids));
+      } catch (e) {}
+    },
+  };
+
+  // =========================================================================
   // EditOverlay  (Shadow DOM panel)
   // =========================================================================
 
@@ -331,6 +396,8 @@
         "    cursor:pointer; white-space:nowrap;",
         "  }",
         "  .sp-tb-btn:hover { background:#4f46e5; }",
+        "  .sp-tb-btn--lock.locked { background:#9ca3af; }",
+        "  .sp-tb-btn--lock.locked:hover { background:#6b7280; }",
         "</style>",
         "<div id='sp-box'>",
         "  <div class='sp-handle' data-pos='nw'></div>",
@@ -346,6 +413,7 @@
         "    <button class='sp-tb-btn' data-action='bg'>BG color</button>",
         "    <button class='sp-tb-btn' data-action='text'>Text color</button>",
         "    <button class='sp-tb-btn' data-action='border'>Border color</button>",
+        "    <button class='sp-tb-btn sp-tb-btn--lock' id='sp-lock-btn' data-action='lock'>Lock</button>",
         "  </div>",
         "</div>",
       ].join("\n");
@@ -371,17 +439,44 @@
         self._startMove(e);
       });
 
-      // Color toolbar buttons (all roles that can edit)
-      this._shadow.querySelectorAll(".sp-tb-btn").forEach(function (btn) {
-        btn.addEventListener("click", function (e) {
-          e.stopPropagation();
-          self._handleColorAction(btn.dataset.action, btn);
+      // Color toolbar buttons
+      this._shadow.querySelectorAll(".sp-tb-btn[data-action='bg']," +
+          ".sp-tb-btn[data-action='text'],.sp-tb-btn[data-action='border']")
+        .forEach(function (btn) {
+          btn.addEventListener("click", function (e) {
+            e.stopPropagation();
+            self._handleColorAction(btn.dataset.action, btn);
+          });
         });
+
+      // Lock button — toggle element lock state
+      var lockBtn = this._shadow.getElementById("sp-lock-btn");
+      lockBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (!self._target) return;
+        var nowLocked = LockedElements.toggle(self._target);
+        self._updateLockBtn(nowLocked);
+        if (nowLocked) {
+          // Deselect after locking so user can't accidentally keep editing it
+          StyleProEditor.deactivateOverlay();
+        }
       });
+    },
+
+    _updateLockBtn: function (isLocked) {
+      var btn = this._shadow.getElementById("sp-lock-btn");
+      if (!btn) return;
+      btn.textContent = isLocked ? "Unlock" : "Lock";
+      if (isLocked) {
+        btn.classList.add("locked");
+      } else {
+        btn.classList.remove("locked");
+      }
     },
 
     attach: function (target) {
       this._target = target;
+      this._updateLockBtn(LockedElements.isLocked(target));
       this._reposition();
     },
 
@@ -693,6 +788,8 @@
     _handleMouseOver: function (e) {
       if (EditOverlay.isLocked()) return;
       var target = e.target;
+      // Never hover over save dialog elements
+      if (target.closest && target.closest("#sp-save-dialog")) return;
       if (!this._isEditable(target)) return;
       if (this._hoveredEl && this._hoveredEl !== target) {
         this._hoveredEl.classList.remove("sp-hovered");
@@ -714,10 +811,24 @@
       }
     },
 
+    // Collapse the overlay without fully deactivating edit mode.
+    deactivateOverlay: function () {
+      EditOverlay.detach();
+      if (this._hoveredEl) {
+        this._hoveredEl.classList.remove("sp-hovered");
+        this._hoveredEl = null;
+      }
+    },
+
     _handleClick: function (e) {
       if (!this._active) return;
       var target = e.target;
-      if (target.closest && (target.closest("#sp-overlay-host") || target.closest("#sp-menu-toggle"))) return;
+      // Always let save dialog and overlay host handle their own clicks.
+      if (target.closest && (
+        target.closest("#sp-overlay-host") ||
+        target.closest("#sp-menu-toggle") ||
+        target.closest("#sp-save-dialog")
+      )) return;
       if (!this._isEditable(target)) return;
 
       e.preventDefault();
@@ -745,6 +856,8 @@
       if (el.closest && el.closest("#sp-overlay-host")) return false;
       if (el.closest && el.closest("#sp-color-picker-panel")) return false;
       if (el.closest && el.closest("#sp-menu-toggle")) return false;
+      if (el.closest && el.closest("#sp-save-dialog")) return false;
+      if (LockedElements.isLocked(el)) return false;
       return true;
     },
 
@@ -1058,14 +1171,7 @@
           return;
         }
 
-        // Ctrl+Shift+Z / Cmd+Shift+Z -- redo
-        if ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) {
-          e.preventDefault();
-          UndoRedoManager.redo();
-          return;
-        }
-
-        // Ctrl+Y / Cmd+Y -- redo (alternative)
+        // Ctrl+Y / Cmd+Y -- redo
         if ((e.ctrlKey || e.metaKey) && e.key === "y") {
           e.preventDefault();
           UndoRedoManager.redo();
@@ -1120,7 +1226,11 @@
     if (document.getElementById("sp-hover-style")) return;
     var s = document.createElement("style");
     s.id = "sp-hover-style";
-    s.textContent = ".sp-hovered{outline:2px solid #6366f1!important;outline-offset:2px!important;cursor:crosshair!important;}";
+    s.textContent = [
+      ".sp-hovered{outline:2px solid #6366f1!important;outline-offset:2px!important;cursor:crosshair!important;}",
+      // Locked elements show a muted dashed outline in canvas mode so devs can see them.
+      "body.sp-canvas-active [data-sp-locked]{outline:2px dashed #9ca3af!important;outline-offset:2px!important;cursor:not-allowed!important;}",
+    ].join("\n");
     document.head.appendChild(s);
   }
 
@@ -1137,6 +1247,7 @@
 
     _injectHoverStyle();
     MenuIntegration.init();
+    LockedElements.restoreVisuals();
 
     // For user role: apply personal theme from localStorage on every load
     if (cfg.role === "user") {
