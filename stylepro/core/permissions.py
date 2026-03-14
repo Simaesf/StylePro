@@ -46,7 +46,6 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
     },
     Role.USER: {
         Permission.EDIT_PERSONAL,
-        Permission.SAVE_THEME,
         Permission.VIEW_EDITOR,
     },
     Role.GUEST: set(),

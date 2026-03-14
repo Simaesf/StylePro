@@ -738,8 +738,51 @@
   };
 
   // =========================================================================
+  // LocalThemeStore
+  // =========================================================================
+  // For non-admin (user role): changes persist in localStorage so they
+  // survive browser reloads without ever touching the server-side store.
+
+  var LocalThemeStore = {
+    _key: function () { return "sp_user_theme_" + ConfigReader.themeName(); },
+
+    save: function (changes) {
+      try {
+        localStorage.setItem(this._key(), JSON.stringify(changes));
+      } catch (e) {
+        console.warn("[StylePro] localStorage write failed:", e);
+      }
+    },
+
+    load: function () {
+      try {
+        var raw = localStorage.getItem(this._key());
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) { return null; }
+    },
+
+    clear: function () {
+      try { localStorage.removeItem(this._key()); } catch (e) {}
+    },
+
+    applyIfPresent: function () {
+      var saved = this.load();
+      if (!saved) return;
+      Object.keys(saved).forEach(function (key) {
+        var entry = saved[key];
+        CSSVariableManager.applyNoRecord(
+          entry.varName || key, entry.value, entry.selector
+        );
+      });
+    },
+  };
+
+  // =========================================================================
   // SaveManager
   // =========================================================================
+  // Admin:  saves globally to ThemeStore (server) + activates for everyone.
+  // User:   saves locally to localStorage (browser-only, personal).
+  // Guest:  cannot save.
 
   var SaveManager = {
     save: function () {
@@ -749,11 +792,27 @@
         return;
       }
 
+      var role = ConfigReader.role();
+
+      if (role === "admin") {
+        this._saveGlobal(changes);
+      } else if (role === "user") {
+        this._saveLocal(changes);
+      } else {
+        Toast.show("Saving requires at least user role.", "error");
+      }
+    },
+
+    _saveLocal: function (changes) {
+      LocalThemeStore.save(changes);
+      Toast.show("Changes saved to your browser (personal theme).");
+    },
+
+    _saveGlobal: function (changes) {
       var cfg = ConfigReader.get();
       var themeName = cfg.theme_name || "default";
       var apiUrl    = cfg.api_url    || "http://127.0.0.1:5001";
 
-      // Build variables dict
       var variables = {};
       Object.keys(changes).forEach(function (key) {
         var entry = changes[key];
@@ -771,7 +830,7 @@
         name: themeName,
         variables: variables,
         metadata: { saved_by: cfg.user_id || "editor" },
-        role: cfg.role || "guest",
+        role: cfg.role || "admin",
       });
 
       var xhr = new XMLHttpRequest();
@@ -779,7 +838,6 @@
       xhr.setRequestHeader("Content-Type", "application/json");
       xhr.onload = function () {
         if (xhr.status === 200) {
-          // Also activate the theme so it persists across reloads
           SaveManager._activateTheme(themeName, cfg.role, apiUrl);
         } else {
           var msg = "Save failed (" + xhr.status + ")";
@@ -799,9 +857,8 @@
       xhr.setRequestHeader("Content-Type", "application/json");
       xhr.onload = function () {
         if (xhr.status === 200) {
-          Toast.show("Theme saved and applied permanently.");
+          Toast.show("Theme saved and applied globally.");
         } else {
-          // Saved but couldn't activate (permission issue for non-admin)
           Toast.show("Theme saved (activate requires admin).");
         }
       };
@@ -915,6 +972,11 @@
     _injectHoverStyle();
     MenuIntegration.init();
 
+    // For user role: apply personal theme from localStorage on every load
+    if (cfg.role === "user") {
+      LocalThemeStore.applyIfPresent();
+    }
+
     // Restore session state across Streamlit reruns
     StyleProEditor.restoreFromSession();
 
@@ -943,6 +1005,7 @@
     _editor: StyleProEditor,
     _cssVars: CSSVariableManager,
     _undoRedo: UndoRedoManager,
+    _localStore: LocalThemeStore,
   };
 
   if (document.readyState === "loading") {

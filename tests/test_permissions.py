@@ -34,8 +34,9 @@ def test_guest_has_no_permissions():
 def test_user_permissions():
     ctx = AccessContext(role=Role.USER)
     assert check_permission(ctx, Permission.EDIT_PERSONAL)
-    assert check_permission(ctx, Permission.SAVE_THEME)
     assert check_permission(ctx, Permission.VIEW_EDITOR)
+    # User cannot save to server or edit global themes
+    assert not check_permission(ctx, Permission.SAVE_THEME)
     assert not check_permission(ctx, Permission.EDIT_GLOBAL)
     assert not check_permission(ctx, Permission.DELETE_THEME)
 
