@@ -1005,6 +1005,26 @@
         onSave(mode === "override" ? currentName : newName);
       });
 
+      // Export CSS link — downloads the current active theme as a standalone
+      // CSS file that can be included in the app without StylePro running.
+      var exportRow = document.createElement("div");
+      exportRow.style.cssText = "margin-top:14px;padding-top:12px;border-top:1px solid #313244;font-size:12px;color:#6c7086;";
+      var exportLink = document.createElement("a");
+      exportLink.textContent = "Export current theme as CSS (for use without StylePro)";
+      exportLink.style.cssText = "color:#6366f1;cursor:pointer;text-decoration:underline;";
+      exportLink.addEventListener("click", function (e) {
+        e.preventDefault();
+        var cfg = ConfigReader.get();
+        var name = cfg.theme_name || "default";
+        var url = (cfg.api_url || "http://127.0.0.1:5001") + "/themes/" + encodeURIComponent(name) + "/export.css";
+        var a = document.createElement("a");
+        a.href = url;
+        a.download = name + ".css";
+        a.click();
+      });
+      exportRow.appendChild(exportLink);
+      box.appendChild(exportRow);
+
       btnRow.appendChild(cancelBtn);
       btnRow.appendChild(saveBtn);
       box.appendChild(btnRow);
@@ -1222,6 +1242,65 @@
     }).join("");
   }
 
+  // Assign data-sp-id to every element in the app body (skipping StylePro's
+  // own overlay).  This makes saved theme CSS selectors match immediately on
+  // page load, so theme changes are visible in the normal app view — not only
+  // while hovering in edit mode.
+  function _seedAllIds() {
+    var host = document.getElementById("sp-overlay-host");
+    var all = document.body.querySelectorAll("*");
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (host && (el === host || host.contains(el))) continue;
+      if (!el.getAttribute("data-sp-id")) {
+        ElementIdentifier.ensure(el);
+      }
+    }
+  }
+
+  // Wait for Streamlit to finish its initial render before seeding IDs.
+  // Streamlit renders into [data-testid="stAppViewContainer"] after React mounts.
+  var _seedObserver = null;
+  var _seedDebounce = null;
+
+  function _scheduleSeed() {
+    clearTimeout(_seedDebounce);
+    _seedDebounce = setTimeout(function () {
+      _seedAllIds();
+      LockedElements.restoreVisuals();
+    }, 150);
+  }
+
+  function _seedIdsWhenReady() {
+    // Initial seed: poll until Streamlit's container appears (up to 3s).
+    var attempts = 0;
+    function tryNow() {
+      var container = document.querySelector('[data-testid="stAppViewContainer"]');
+      if (container && container.querySelectorAll("*").length > 10) {
+        _seedAllIds();
+        LockedElements.restoreVisuals();
+      } else if (attempts < 15) {
+        attempts++;
+        setTimeout(tryNow, 200);
+      }
+    }
+    tryNow();
+
+    // After initial seed, watch for Streamlit reruns (which wipe and re-render
+    // the DOM).  Re-seed after each burst of mutations settles.
+    if (!_seedObserver) {
+      _seedObserver = new MutationObserver(function (mutations) {
+        var significant = false;
+        for (var i = 0; i < mutations.length; i++) {
+          if (mutations[i].addedNodes.length > 0) { significant = true; break; }
+        }
+        if (significant) _scheduleSeed();
+      });
+      var root = document.querySelector('[data-testid="stAppViewContainer"]') || document.body;
+      _seedObserver.observe(root, { childList: true, subtree: true });
+    }
+  }
+
   function _injectHoverStyle() {
     if (document.getElementById("sp-hover-style")) return;
     var s = document.createElement("style");
@@ -1246,8 +1325,8 @@
     }
 
     _injectHoverStyle();
+    _seedIdsWhenReady();
     MenuIntegration.init();
-    LockedElements.restoreVisuals();
 
     // For user role: apply personal theme from localStorage on every load
     if (cfg.role === "user") {

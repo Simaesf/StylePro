@@ -121,6 +121,27 @@ class _Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json(200, theme.to_dict())
 
+        elif len(parts) == 3 and parts[0] == "themes" and parts[2] == "export.css":
+            # GET /themes/{name}/export.css  — download theme as plain CSS file
+            name = parts[1]
+            theme = store.load(name)
+            if theme is None:
+                self._send_error(404, f"Theme '{name}' not found.")
+            else:
+                css = theme.to_css()
+                body = css.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/css; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header(
+                    "Content-Disposition",
+                    f'attachment; filename="{name}.css"',
+                )
+                self._add_cors_headers()
+                self.end_headers()
+                self.wfile.write(body)
+                logger.info("EditorServer: exported CSS for theme '%s'", name)
+
         else:
             self._send_error(404, f"Unknown route: {self.path}")
 
