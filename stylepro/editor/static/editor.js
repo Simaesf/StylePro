@@ -162,7 +162,11 @@
       var key = this._changeKey(varName, selector);
       delete this._changes[key];
       if (!selector) {
-        document.documentElement.style.removeProperty(varName);
+        if (varName.indexOf("--") === 0) {
+          document.documentElement.style.removeProperty(varName);
+        } else {
+          document.documentElement.style[varName] = "";
+        }
       } else {
         var styleId = "sp-scoped-" + key.replace(/[^a-zA-Z0-9]/g, "_");
         var el = document.getElementById(styleId);
@@ -172,8 +176,13 @@
     },
 
     _applyToDom: function (varName, value, selector) {
+      var isCustomProp = varName.indexOf("--") === 0;
       if (!selector) {
-        document.documentElement.style.setProperty(varName, value);
+        if (isCustomProp) {
+          document.documentElement.style.setProperty(varName, value);
+        } else {
+          document.documentElement.style[varName] = value;
+        }
       } else {
         var key = this._changeKey(varName, selector);
         var styleId = "sp-scoped-" + key.replace(/[^a-zA-Z0-9]/g, "_");
@@ -183,7 +192,12 @@
           el.id = styleId;
           document.head.appendChild(el);
         }
-        el.textContent = selector + " { " + varName + ": " + value + "; }";
+        // Regular CSS properties need !important to override framework styles
+        // (e.g. Streamlit's button background). CSS custom properties do not.
+        var decl = isCustomProp
+          ? (varName + ": " + value + ";")
+          : (varName + ": " + value + " !important;");
+        el.textContent = selector + " { " + decl + " }";
       }
     },
 
@@ -485,15 +499,17 @@
       var computed = window.getComputedStyle(this._target);
 
       var cssPropMap = { bg: "background-color", text: "color", border: "border-color" };
-      var varSuffixMap = { bg: "bg-color", text: "text-color", border: "border-color" };
 
       var currentColor = computed[cssPropMap[action]] || "#000000";
       currentColor = rgbStringToHex(currentColor) || "#000000";
 
       global.StyleProColorPicker.open(btn, currentColor, function (hex) {
-        self._target.style[cssPropMap[action]] = hex;
-        var varName = ConfigReader.varPrefix() + "-" + varSuffixMap[action];
-        CSSVariableManager.apply(varName, hex, ElementIdentifier.selector(spId));
+        // Store as the actual CSS property name (not a CSS variable) so:
+        // 1. The scoped style tag uses !important and wins over framework CSS
+        // 2. Undo/redo reverts the same property correctly
+        // 3. The saved theme generates valid CSS on reload
+        // Do NOT set target.style[prop] — the scoped style tag handles it.
+        CSSVariableManager.apply(cssPropMap[action], hex, ElementIdentifier.selector(spId));
         self._reposition();
       });
     },
@@ -796,9 +812,139 @@
   };
 
   // =========================================================================
+  // SaveDialog
+  // =========================================================================
+  // Shown when an admin saves: choose override current theme or new theme.
+
+  var SaveDialog = {
+    _el: null,
+
+    show: function (onSave) {
+      if (this._el) return;
+      var self = this;
+      var currentName = ConfigReader.get().theme_name || "default";
+
+      var overlay = document.createElement("div");
+      overlay.id = "sp-save-dialog";
+      overlay.style.cssText = [
+        "position:fixed", "top:0", "left:0", "right:0", "bottom:0",
+        "background:rgba(0,0,0,0.6)", "z-index:2147483647",
+        "display:flex", "align-items:center", "justify-content:center",
+      ].join(";");
+
+      var box = document.createElement("div");
+      box.style.cssText = [
+        "background:#1e1e2e", "color:#cdd6f4", "padding:24px",
+        "border-radius:8px", "font-family:system-ui,sans-serif",
+        "min-width:300px", "max-width:420px",
+        "box-shadow:0 8px 32px rgba(0,0,0,0.5)",
+      ].join(";");
+
+      var title = document.createElement("div");
+      title.style.cssText = "font-size:15px;font-weight:600;margin-bottom:16px;";
+      title.textContent = "Save Theme";
+      box.appendChild(title);
+
+      // Radio: override
+      box.appendChild(self._radioLabel("sp-save-mode", "override", true,
+        "Override \"" + currentName + "\""));
+
+      // Radio: new theme
+      box.appendChild(self._radioLabel("sp-save-mode", "new", false,
+        "Save as new theme"));
+
+      // Name input (shown when "new" is selected)
+      var nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.placeholder = "new_theme_name";
+      nameInput.style.cssText = [
+        "display:none", "width:100%", "box-sizing:border-box",
+        "padding:6px 10px", "margin:8px 0 4px",
+        "background:#313244", "border:1px solid #45475a",
+        "border-radius:4px", "color:#cdd6f4", "font-size:13px",
+      ].join(";");
+      box.appendChild(nameInput);
+
+      box.querySelectorAll("input[type=radio]").forEach(function (r) {
+        r.addEventListener("change", function () {
+          nameInput.style.display = (r.value === "new" && r.checked) ? "block" : "none";
+          if (r.value === "new" && r.checked) nameInput.focus();
+        });
+      });
+
+      // Buttons
+      var btnRow = document.createElement("div");
+      btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end;margin-top:20px;";
+
+      var cancelBtn = self._btn("Cancel", "#313244");
+      cancelBtn.addEventListener("click", function () { self.close(); });
+
+      var saveBtn = self._btn("Save", "#6366f1");
+      saveBtn.addEventListener("click", function () {
+        var mode = box.querySelector("input[name=sp-save-mode]:checked").value;
+        var newName = nameInput.value.trim();
+        if (mode === "new" && !newName) {
+          nameInput.style.borderColor = "#f38ba8";
+          nameInput.focus();
+          return;
+        }
+        self.close();
+        onSave(mode === "override" ? currentName : newName);
+      });
+
+      btnRow.appendChild(cancelBtn);
+      btnRow.appendChild(saveBtn);
+      box.appendChild(btnRow);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      this._el = overlay;
+
+      // Close on backdrop click
+      overlay.addEventListener("click", function (e) {
+        if (e.target === overlay) self.close();
+      });
+      // Escape closes dialog without deactivating editor
+      overlay.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") { e.stopPropagation(); self.close(); }
+      });
+    },
+
+    close: function () {
+      if (this._el && this._el.parentNode) {
+        this._el.parentNode.removeChild(this._el);
+      }
+      this._el = null;
+    },
+
+    _radioLabel: function (name, value, checked, text) {
+      var label = document.createElement("label");
+      label.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;font-size:14px;";
+      var radio = document.createElement("input");
+      radio.type = "radio"; radio.name = name; radio.value = value;
+      radio.checked = checked; radio.style.cursor = "pointer";
+      var span = document.createElement("span");
+      span.textContent = text;
+      label.appendChild(radio);
+      label.appendChild(span);
+      return label;
+    },
+
+    _btn: function (text, bg) {
+      var btn = document.createElement("button");
+      btn.textContent = text;
+      btn.style.cssText = [
+        "padding:8px 16px", "background:" + bg, "color:#cdd6f4",
+        "border:none", "border-radius:4px", "cursor:pointer",
+        "font-size:13px", "font-family:system-ui,sans-serif",
+      ].join(";");
+      return btn;
+    },
+  };
+
+  // =========================================================================
   // SaveManager
   // =========================================================================
-  // Admin:  saves globally to ThemeStore (server) + activates for everyone.
+  // Admin:  shows SaveDialog then saves globally to ThemeStore + activates.
   // User:   saves locally to localStorage (browser-only, personal).
   // Guest:  cannot save.
 
@@ -813,7 +959,9 @@
       var role = ConfigReader.role();
 
       if (role === "admin") {
-        this._saveGlobal(changes);
+        SaveDialog.show(function (themeName) {
+          SaveManager._saveGlobal(changes, themeName);
+        });
       } else if (role === "user") {
         this._saveLocal(changes);
       } else {
@@ -826,19 +974,19 @@
       Toast.show("Changes saved to your browser (personal theme).");
     },
 
-    _saveGlobal: function (changes) {
+    _saveGlobal: function (changes, themeName) {
       var cfg = ConfigReader.get();
-      var themeName = cfg.theme_name || "default";
-      var apiUrl    = cfg.api_url    || "http://127.0.0.1:5001";
+      var apiUrl = cfg.api_url || "http://127.0.0.1:5001";
 
+      // Use the full change key (property|selector) to avoid collisions when
+      // the same CSS property is changed on multiple elements.
       var variables = {};
       Object.keys(changes).forEach(function (key) {
         var entry = changes[key];
-        var varName = entry.varName || key;
-        variables[varName] = {
-          name: varName,
+        variables[key] = {
+          name: entry.varName || key,
           value: entry.value,
-          label: varName,
+          label: entry.varName || key,
           category: "color",
           element_selector: entry.selector || null,
         };

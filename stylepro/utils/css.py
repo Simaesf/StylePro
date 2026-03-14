@@ -132,7 +132,14 @@ def variables_to_css_block(selector: str, variables: dict[str, str]) -> str:
     if not variables:
         return ""
 
-    lines = [f"  {name}: {value};" for name, value in sorted(variables.items())]
+    lines = []
+    for name, value in sorted(variables.items()):
+        # CSS custom properties (--sp-*) do not use !important — it causes
+        # unexpected cascade behaviour in browsers.
+        # Regular CSS properties (e.g. background-color) need !important to
+        # override framework styles such as Streamlit's button rules.
+        suffix = "" if name.startswith("--") else " !important"
+        lines.append(f"  {name}: {value}{suffix};")
     return f"{selector} {{\n" + "\n".join(lines) + "\n}"
 
 
