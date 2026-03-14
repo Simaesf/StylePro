@@ -535,12 +535,28 @@
     },
 
     _tryInject: function (root) {
-      // Streamlit popover menu items live inside [data-testid="stMainMenu"]
-      // or inside a popover with role="menu" / ul elements.
-      // We look for Streamlit's menu container and append our custom item.
-      var menuContainers = root.querySelectorAll
-        ? root.querySelectorAll('[data-testid="stMainMenuList"], [role="menu"]')
-        : [];
+      // Streamlit renders the hamburger menu into a portal element.
+      // The selector varies across Streamlit versions; we try several.
+      if (!root.querySelectorAll) return;
+
+      var menuContainers = [];
+      var selectors = [
+        '[data-testid="stMainMenuList"]',          // Streamlit ~1.30
+        '[data-testid="stMainMenuPopover"] ul',    // Streamlit ~1.35+
+        '[data-baseweb="menu"] ul',                // BaseUI menu component
+        '[role="menu"]',                           // ARIA fallback
+      ];
+      var seen = [];
+      selectors.forEach(function (sel) {
+        try {
+          root.querySelectorAll(sel).forEach(function (el) {
+            if (seen.indexOf(el) === -1) {
+              seen.push(el);
+              menuContainers.push(el);
+            }
+          });
+        } catch (e) {}
+      });
 
       for (var i = 0; i < menuContainers.length; i++) {
         var menu = menuContainers[i];
@@ -574,11 +590,13 @@
         });
         item.addEventListener("click", function (e) {
           e.stopPropagation();
-          StyleProEditor.toggle();
-          // Close the Streamlit menu by pressing Escape
+          // Dispatch Escape BEFORE toggle() so KeyboardHandler is not yet
+          // attached when the event fires — otherwise Escape immediately
+          // deactivates the editor we're about to activate.
           document.dispatchEvent(new KeyboardEvent("keydown", {
             key: "Escape", keyCode: 27, bubbles: true,
           }));
+          StyleProEditor.toggle();
         });
 
         menu.appendChild(item);
