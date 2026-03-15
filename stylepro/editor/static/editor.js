@@ -5,11 +5,12 @@
  *
  * Modules:
  *   ConfigReader        -- reads window.STYLEPRO_CONFIG
- *   UndoRedoManager     -- action history stack, Ctrl+Z / Ctrl+Shift+Z
+ *   UndoRedoManager     -- action history stack, Ctrl+Z / Ctrl+Y
  *   CSSVariableManager  -- live CSS variable updates + sessionStorage
  *   ElementIdentifier   -- deterministic data-sp-id on hover
  *   EditOverlay         -- Shadow DOM: resize handles, move handle, color trigger
  *   MenuIntegration     -- inject "StylePro Editor" into Streamlit hamburger menu
+ *   MultiSelect         -- Ctrl+Click group selection + group drag
  *   StyleProEditor      -- activate / deactivate + event coordination
  *   SaveManager         -- POST to API + activate theme for permanent persistence
  *   KeyboardHandler     -- Escape, Ctrl+S, Ctrl+Z, Ctrl+Shift+Z, arrow nudge
@@ -246,22 +247,26 @@
     },
 
     _computeId: function (el) {
-      var tag = el.tagName.toLowerCase();
-      var parent = el.parentNode;
-      var idx = 0;
-      if (parent) {
-        var siblings = parent.querySelectorAll(tag);
-        for (var i = 0; i < siblings.length; i++) {
-          if (siblings[i] === el) { idx = i; break; }
-        }
-      }
-      var depth = 0;
+      // Build a full DOM path (child-index at each ancestor) and hash it so
+      // the ID is globally unique — not just unique among siblings.
+      // Previous depth+index approach produced collisions when two elements
+      // of the same type lived at the same depth in separate sub-trees,
+      // causing a color change on one element to bleed to others.
+      var pathInts = [];
       var node = el;
-      while (node.parentNode && node.parentNode !== document.body) {
-        depth++;
-        node = node.parentNode;
+      while (node && node !== document.body && node.parentNode) {
+        var parent = node.parentNode;
+        pathInts.unshift(Array.prototype.indexOf.call(parent.children, node));
+        node = parent;
       }
-      return tag + "-d" + depth + "i" + idx;
+      // FNV-1a 32-bit hash — short, deterministic, and collision-resistant
+      // for typical page sizes.
+      var h = 2166136261;
+      for (var i = 0; i < pathInts.length; i++) {
+        h ^= pathInts[i];
+        h = (h * 16777619) >>> 0;
+      }
+      return el.tagName.toLowerCase() + "-" + h.toString(16);
     },
 
     selector: function (id) {
@@ -556,7 +561,23 @@
       if (!this._target) return;
       var self = this;
       var startX = e.clientX, startY = e.clientY;
-      var style = window.getComputedStyle(this._target);
+
+      // Group move: if 2+ elements are selected, move all of them together.
+      if (MultiSelect.count() > 1) {
+        var group = MultiSelect.startGroupMove(startX, startY);
+        function onMoveGroup(ev) { group.onMove(ev); }
+        function onUpGroup() {
+          document.removeEventListener("mousemove", onMoveGroup);
+          document.removeEventListener("mouseup",  onUpGroup);
+          group.onUp();
+        }
+        document.addEventListener("mousemove", onMoveGroup);
+        document.addEventListener("mouseup",  onUpGroup);
+        return;
+      }
+
+      // Single element move.
+      var style  = window.getComputedStyle(this._target);
       var startML = parseFloat(style.marginLeft) || 0;
       var startMT = parseFloat(style.marginTop)  || 0;
       var spId = ElementIdentifier.ensure(this._target);
@@ -673,9 +694,6 @@
         var menu = menuContainers[i];
         if (menu.querySelector("#sp-menu-toggle")) continue;
 
-        // Find a separator or the last item to insert after
-        var items = menu.querySelectorAll("li, [role='menuitem'], [data-testid]");
-
         // Create separator
         var sep = document.createElement("hr");
         sep.style.cssText = "border:none;border-top:1px solid rgba(128,128,128,0.2);margin:4px 0;";
@@ -726,6 +744,84 @@
   // StyleProEditor
   // =========================================================================
 
+  // =========================================================================
+  // MultiSelect
+  // =========================================================================
+  // Ctrl+Click adds elements to a group. Dragging any member moves the whole
+  // group together. Color changes from the toolbar apply to every member.
+
+  var MultiSelect = {
+    _items: [],
+    CSS_CLASS: "sp-multi-selected",
+
+    add: function (el) {
+      if (this._items.indexOf(el) !== -1) return;
+      this._items.push(el);
+      el.classList.add(this.CSS_CLASS);
+    },
+
+    remove: function (el) {
+      this._items = this._items.filter(function (e) { return e !== el; });
+      el.classList.remove(MultiSelect.CSS_CLASS);
+    },
+
+    toggle: function (el) {
+      if (this._items.indexOf(el) !== -1) { this.remove(el); return false; }
+      this.add(el); return true;
+    },
+
+    has: function (el) { return this._items.indexOf(el) !== -1; },
+
+    count: function () { return this._items.length; },
+
+    getAll: function () { return this._items.slice(); },
+
+    clear: function () {
+      this._items.forEach(function (el) { el.classList.remove(MultiSelect.CSS_CLASS); });
+      this._items = [];
+    },
+
+    // Kick off a group move: snapshot every member's current margins, then
+    // return an onMove handler that the caller wires up to mousemove.
+    startGroupMove: function (startX, startY) {
+      var snapshots = this._items.map(function (el) {
+        var cs = window.getComputedStyle(el);
+        return {
+          el: el,
+          ml: parseFloat(cs.marginLeft) || 0,
+          mt: parseFloat(cs.marginTop)  || 0,
+        };
+      });
+
+      return {
+        onMove: function (ev) {
+          var dx = ev.clientX - startX, dy = ev.clientY - startY;
+          snapshots.forEach(function (snap) {
+            snap.el.style.marginLeft = (snap.ml + dx) + "px";
+            snap.el.style.marginTop  = (snap.mt + dy) + "px";
+          });
+          EditOverlay.update();
+        },
+        onUp: function () {
+          // Persist each member's new position into the CSS change store.
+          snapshots.forEach(function (snap) {
+            var spId = ElementIdentifier.ensure(snap.el);
+            var sel  = ElementIdentifier.selector(spId);
+            var cs   = window.getComputedStyle(snap.el);
+            var ml = parseFloat(cs.marginLeft) || 0;
+            var mt = parseFloat(cs.marginTop)  || 0;
+            if (Math.abs(ml - snap.ml) > 0.5) {
+              CSSVariableManager.apply("margin-left",  Math.round(ml) + "px", sel);
+            }
+            if (Math.abs(mt - snap.mt) > 0.5) {
+              CSSVariableManager.apply("margin-top", Math.round(mt) + "px", sel);
+            }
+          });
+        },
+      };
+    },
+  };
+
   var StyleProEditor = {
     _active: false,
     _hoveredEl: null,
@@ -753,6 +849,7 @@
       this._active = false;
       document.body.classList.remove("sp-canvas-active");
       EditOverlay.detach();
+      MultiSelect.clear();
       this._detachListeners();
       MenuIntegration.updateLabel(false);
       KeyboardHandler.detach();
@@ -788,8 +885,11 @@
     _handleMouseOver: function (e) {
       if (EditOverlay.isLocked()) return;
       var target = e.target;
-      // Never hover over save dialog elements
-      if (target.closest && target.closest("#sp-save-dialog")) return;
+      if (target.closest && (
+        target.closest("#sp-save-dialog") ||
+        target.closest('[data-testid="stToolbarActions"]') ||
+        target.closest('[data-testid="stHeader"]')
+      )) return;
       if (!this._isEditable(target)) return;
       if (this._hoveredEl && this._hoveredEl !== target) {
         this._hoveredEl.classList.remove("sp-hovered");
@@ -834,6 +934,29 @@
       e.preventDefault();
       e.stopPropagation();
 
+      // Ctrl/Cmd+Click: toggle element in multi-selection group.
+      if (e.ctrlKey || e.metaKey) {
+        var added = MultiSelect.toggle(target);
+        ElementIdentifier.ensure(target);
+        if (added) {
+          // Show overlay on the most recently added element for color access.
+          EditOverlay.init();
+          EditOverlay.attach(target);
+          EditOverlay.lock();
+        } else if (MultiSelect.count() === 0) {
+          EditOverlay.detach();
+        }
+        Toast.show(
+          MultiSelect.count() === 0
+            ? "Selection cleared."
+            : MultiSelect.count() + " element(s) selected — drag the move handle to move them together."
+        );
+        return;
+      }
+
+      // Normal click: clear any group selection, single-select this element.
+      MultiSelect.clear();
+
       if (EditOverlay.isLocked() && EditOverlay._target === target) {
         EditOverlay._locked = false;
         return;
@@ -857,6 +980,10 @@
       if (el.closest && el.closest("#sp-color-picker-panel")) return false;
       if (el.closest && el.closest("#sp-menu-toggle")) return false;
       if (el.closest && el.closest("#sp-save-dialog")) return false;
+      // Exclude Streamlit's top toolbar — hamburger, deploy button, etc.
+      // Must remain clickable so the user can open the StylePro menu item.
+      if (el.closest && el.closest('[data-testid="stToolbarActions"]')) return false;
+      if (el.closest && el.closest('[data-testid="stHeader"]')) return false;
       if (LockedElements.isLocked(el)) return false;
       return true;
     },
@@ -1307,6 +1434,8 @@
     s.id = "sp-hover-style";
     s.textContent = [
       ".sp-hovered{outline:2px solid #6366f1!important;outline-offset:2px!important;cursor:crosshair!important;}",
+      // Multi-selected: teal ring so it's visually distinct from the single-select purple.
+      ".sp-multi-selected{outline:2px solid #2dd4bf!important;outline-offset:2px!important;}",
       // Locked elements show a muted dashed outline in canvas mode so devs can see them.
       "body.sp-canvas-active [data-sp-locked]{outline:2px dashed #9ca3af!important;outline-offset:2px!important;cursor:not-allowed!important;}",
     ].join("\n");
