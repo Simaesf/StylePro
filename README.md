@@ -13,7 +13,7 @@ A pip-installable Python package that adds a non-intrusive visual style editor o
   - **admin**: full editing (colors, layout, resize, move), global save to server
   - **user**: color editing only, personal save to browser localStorage
   - **guest**: view only, editor hidden
-- **Undo/redo** — Ctrl+Z / Ctrl+Shift+Z with a 200-action stack
+- **Undo/redo** — Ctrl+Z / Ctrl+Y with a 200-action stack
 - **Pluggable storage** — themes persist via JSON files, YAML files, or SQLite (all thread-safe)
 - **Keyboard shortcuts** — Escape (deactivate), Ctrl+S (save), arrow keys (nudge, admin only)
 - **Streamlit menu integration** — editor toggle appears in Streamlit's native hamburger menu
@@ -234,7 +234,7 @@ The API server auto-retries on incrementing ports (up to 10 attempts) if the req
 |----------|--------|--------------|
 | Escape | Deactivate edit mode | Any |
 | Ctrl+Z | Undo | Any |
-| Ctrl+Shift+Z / Ctrl+Y | Redo | Any |
+| Ctrl+Y | Redo | Any |
 | Ctrl+S | Save | User or Admin |
 | Arrow keys | Nudge element 1px | Admin |
 | Shift+Arrow keys | Nudge element 10px | Admin |

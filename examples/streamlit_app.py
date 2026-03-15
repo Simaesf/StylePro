@@ -23,6 +23,9 @@ from stylepro import StreamlitStylePro
 
 _sp = StreamlitStylePro.from_config(role="admin")
 _sp.inject()
+# In your Streamlit app — no sp.inject() needed
+# with open("mytheme.css") as f:
+#     st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Demo app content — a representative mix of Streamlit components so the

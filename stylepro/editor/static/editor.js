@@ -13,7 +13,7 @@
  *   MultiSelect         -- Ctrl+Click group selection + group drag
  *   StyleProEditor      -- activate / deactivate + event coordination
  *   SaveManager         -- POST to API + activate theme for permanent persistence
- *   KeyboardHandler     -- Escape, Ctrl+S, Ctrl+Z, Ctrl+Shift+Z, arrow nudge
+ *   KeyboardHandler     -- Escape, Ctrl+S, Ctrl+Z, Ctrl+Y, arrow nudge
  *   Toast               -- lightweight notification
  *
  * window.STYLEPRO_CONFIG must be set before this script executes.
@@ -521,6 +521,8 @@
       var startX = e.clientX, startY = e.clientY;
       var startW = rect.width, startH = rect.height;
       var spId = ElementIdentifier.ensure(this._target);
+      var sel  = ElementIdentifier.selector(spId);
+      var lastW = startW, lastH = startH;
 
       function onMove(ev) {
         var dx = ev.clientX - startX, dy = ev.clientY - startY;
@@ -530,19 +532,14 @@
         if (pos.includes("w"))  newW = Math.max(20, startW - dx);
         if (pos.includes("n"))  newH = Math.max(20, startH - dy);
 
-        if (newW !== startW) {
-          CSSVariableManager.apply(
-            ConfigReader.varPrefix() + "-width", Math.round(newW) + "px",
-            ElementIdentifier.selector(spId)
-          );
-          self._target.style.width = Math.round(newW) + "px";
+        // Live preview: update scoped style tag directly without recording to undo stack.
+        if (newW !== lastW) {
+          CSSVariableManager._applyToDom("width", Math.round(newW) + "px", sel);
+          lastW = newW;
         }
-        if (newH !== startH) {
-          CSSVariableManager.apply(
-            ConfigReader.varPrefix() + "-height", Math.round(newH) + "px",
-            ElementIdentifier.selector(spId)
-          );
-          self._target.style.height = Math.round(newH) + "px";
+        if (newH !== lastH) {
+          CSSVariableManager._applyToDom("height", Math.round(newH) + "px", sel);
+          lastH = newH;
         }
         self._reposition();
       }
@@ -550,6 +547,15 @@
       function onUp() {
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup",  onUp);
+        // Commit final size to undo stack once, then clear any inline style.
+        if (Math.abs(lastW - startW) > 0.5) {
+          CSSVariableManager.apply("width",  Math.round(lastW) + "px", sel);
+        }
+        if (Math.abs(lastH - startH) > 0.5) {
+          CSSVariableManager.apply("height", Math.round(lastH) + "px", sel);
+        }
+        self._target.style.width  = "";
+        self._target.style.height = "";
       }
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup",  onUp);
@@ -581,26 +587,31 @@
       var startML = parseFloat(style.marginLeft) || 0;
       var startMT = parseFloat(style.marginTop)  || 0;
       var spId = ElementIdentifier.ensure(this._target);
+      var sel  = ElementIdentifier.selector(spId);
+      var lastML = startML, lastMT = startMT;
 
       function onMove(ev) {
         var dx = ev.clientX - startX, dy = ev.clientY - startY;
-        var ml = startML + dx, mt = startMT + dy;
-        self._target.style.marginLeft = ml + "px";
-        self._target.style.marginTop  = mt + "px";
-        CSSVariableManager.apply(
-          ConfigReader.varPrefix() + "-margin-left", Math.round(ml) + "px",
-          ElementIdentifier.selector(spId)
-        );
-        CSSVariableManager.apply(
-          ConfigReader.varPrefix() + "-margin-top", Math.round(mt) + "px",
-          ElementIdentifier.selector(spId)
-        );
+        lastML = startML + dx;
+        lastMT = startMT + dy;
+        // Live preview: update scoped style tag directly without recording to undo stack.
+        CSSVariableManager._applyToDom("margin-left", Math.round(lastML) + "px", sel);
+        CSSVariableManager._applyToDom("margin-top",  Math.round(lastMT) + "px", sel);
         self._reposition();
       }
 
       function onUp() {
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup",  onUp);
+        // Commit final position to undo stack once, then clear any inline style.
+        if (Math.abs(lastML - startML) > 0.5) {
+          CSSVariableManager.apply("margin-left", Math.round(lastML) + "px", sel);
+        }
+        if (Math.abs(lastMT - startMT) > 0.5) {
+          CSSVariableManager.apply("margin-top",  Math.round(lastMT) + "px", sel);
+        }
+        self._target.style.marginLeft = "";
+        self._target.style.marginTop  = "";
       }
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup",  onUp);
@@ -803,7 +814,8 @@
           EditOverlay.update();
         },
         onUp: function () {
-          // Persist each member's new position into the CSS change store.
+          // Persist each member's new position into the CSS change store, then
+          // clear inline styles so only the scoped !important rule controls position.
           snapshots.forEach(function (snap) {
             var spId = ElementIdentifier.ensure(snap.el);
             var sel  = ElementIdentifier.selector(spId);
@@ -816,6 +828,8 @@
             if (Math.abs(mt - snap.mt) > 0.5) {
               CSSVariableManager.apply("margin-top", Math.round(mt) + "px", sel);
             }
+            snap.el.style.marginLeft = "";
+            snap.el.style.marginTop  = "";
           });
         },
       };
@@ -996,17 +1010,15 @@
       var target = EditOverlay._target;
       if (!target) return;
       var spId = ElementIdentifier.ensure(target);
+      var sel  = ElementIdentifier.selector(spId);
       var style = window.getComputedStyle(target);
-      var prop = axis === "x" ? "marginLeft" : "marginTop";
-      var varSuffix = axis === "x" ? "margin-left" : "margin-top";
+      var prop    = axis === "x" ? "marginLeft"   : "marginTop";
+      var cssProp = axis === "x" ? "margin-left"  : "margin-top";
       var current = parseFloat(style[prop]) || 0;
       var next = current + px;
-      target.style[prop] = next + "px";
-      CSSVariableManager.apply(
-        ConfigReader.varPrefix() + "-" + varSuffix,
-        Math.round(next) + "px",
-        ElementIdentifier.selector(spId)
-      );
+      CSSVariableManager.apply(cssProp, Math.round(next) + "px", sel);
+      // Clear any inline style so the scoped !important rule controls position.
+      target.style[prop] = "";
       EditOverlay._reposition();
     },
   };

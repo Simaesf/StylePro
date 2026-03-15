@@ -161,7 +161,7 @@ All vanilla JS, single file, runs in the main document. Internal modules:
 | `EditOverlay` | Shadow DOM host: 8 resize handles + move button + color toolbar; handles/move hidden for non-admin via CSS |
 | `MenuIntegration` | MutationObserver watches for Streamlit's hamburger menu popover; injects "StylePro Editor" menu item |
 | `SaveManager` | Branches on role: admin calls `_saveGlobal()` (POST to API + activate), user calls `_saveLocal()` (localStorage) |
-| `KeyboardHandler` | Escape (deactivate), Ctrl+Z (undo), Ctrl+Shift+Z/Ctrl+Y (redo), Ctrl+S (save), arrows (nudge, admin only) |
+| `KeyboardHandler` | Escape (deactivate), Ctrl+Z (undo), Ctrl+Y (redo), Ctrl+S (save), arrows (nudge, admin only) |
 | `Toast` | Non-intrusive notification messages (success/error) |
 
 #### JS Configuration
