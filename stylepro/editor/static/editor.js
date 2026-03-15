@@ -247,26 +247,25 @@
     },
 
     _computeId: function (el) {
-      // Build a full DOM path (child-index at each ancestor) and hash it so
-      // the ID is globally unique — not just unique among siblings.
-      // Previous depth+index approach produced collisions when two elements
-      // of the same type lived at the same depth in separate sub-trees,
-      // causing a color change on one element to bleed to others.
-      var pathInts = [];
-      var node = el;
-      while (node && node !== document.body && node.parentNode) {
-        var parent = node.parentNode;
-        pathInts.unshift(Array.prototype.indexOf.call(parent.children, node));
-        node = parent;
+      // Assign a global document-order index: "button-3" = the 4th <button>
+      // in the page (excluding StylePro's own overlay and Streamlit's header).
+      // This is simpler and more stable than a DOM-path hash — for the same
+      // app code, Streamlit always renders the same components in the same
+      // document order, so these IDs are identical on every page load.
+      var tag = el.tagName.toLowerCase();
+      var host   = document.getElementById("sp-overlay-host");
+      var header = document.querySelector('[data-testid="stHeader"]');
+      var all = document.body.querySelectorAll(tag);
+      var count = 0;
+      for (var i = 0; i < all.length; i++) {
+        var cand = all[i];
+        if (host   && (cand === host   || host.contains(cand)))   continue;
+        if (header && (cand === header || header.contains(cand))) continue;
+        if (cand === el) return tag + "-" + count;
+        count++;
       }
-      // FNV-1a 32-bit hash — short, deterministic, and collision-resistant
-      // for typical page sizes.
-      var h = 2166136261;
-      for (var i = 0; i < pathInts.length; i++) {
-        h ^= pathInts[i];
-        h = (h * 16777619) >>> 0;
-      }
-      return el.tagName.toLowerCase() + "-" + h.toString(16);
+      // Fallback (element not found — should not happen in practice).
+      return tag + "-" + count;
     },
 
     selector: function (id) {
@@ -1386,14 +1385,22 @@
   // page load, so theme changes are visible in the normal app view — not only
   // while hovering in edit mode.
   function _seedAllIds() {
-    var host = document.getElementById("sp-overlay-host");
+    // Walk every element in document order and assign "tag-N" IDs in a single
+    // pass.  This is O(n) and consistent with _computeId's counting logic —
+    // both exclude the StylePro overlay host and Streamlit's header toolbar.
+    var host   = document.getElementById("sp-overlay-host");
+    var header = document.querySelector('[data-testid="stHeader"]');
+    var tagCounts = {};
     var all = document.body.querySelectorAll("*");
     for (var i = 0; i < all.length; i++) {
       var el = all[i];
-      if (host && (el === host || host.contains(el))) continue;
-      if (!el.getAttribute("data-sp-id")) {
-        ElementIdentifier.ensure(el);
-      }
+      if (host   && (el === host   || host.contains(el)))   continue;
+      if (header && (el === header || header.contains(el))) continue;
+      if (el.getAttribute("data-sp-id")) continue; // already seeded
+      var tag = el.tagName.toLowerCase();
+      var idx = tagCounts[tag] || 0;
+      tagCounts[tag] = idx + 1;
+      el.setAttribute("data-sp-id", tag + "-" + idx);
     }
   }
 
