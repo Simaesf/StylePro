@@ -1,15 +1,16 @@
 """
 examples/dash_app.py
 ---------------------
-Minimal Dash demo app with StylePro wired in (stub — v0.2.0).
+Minimal Dash demo app with StylePro wired in.
 
 Run:
     cd StylePro
     pip install -e ".[dash]"
     python examples/dash_app.py
 
-StylePro integration point is noted below.
-Full Dash support arrives in StylePro v0.2.0.
+Open http://127.0.0.1:8050 in your browser.
+The StylePro FAB (floating action button) appears in the bottom-right corner.
+Click it to activate canvas edit mode.
 """
 
 import logging
@@ -20,22 +21,24 @@ import plotly.express as px
 import pandas as pd
 import numpy as np
 
+from stylepro import DashStylePro
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(name)s  %(levelname)s  %(message)s",
 )
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Dash app
+# ---------------------------------------------------------------------------
 app = dash.Dash(__name__, title="StylePro Dash Demo")
 
 # ---------------------------------------------------------------------------
-# StylePro integration — will be activated in v0.2.0.
+# StylePro integration — inject once after creating the app, before run().
 # ---------------------------------------------------------------------------
-try:
-    from stylepro import DashStylePro  # noqa: F401
-    log.info("StylePro DashStylePro imported. Full integration in v0.2.0.")
-except Exception as exc:
-    log.warning("StylePro Dash integration not yet active: %s", exc)
+sp = DashStylePro.from_config(role="admin")
+sp.inject(app)
 
 # ---------------------------------------------------------------------------
 # Sample data
@@ -58,7 +61,7 @@ app.layout = html.Div(
     id="sp-root",
     children=[
         html.H1("StylePro — Dash Demo"),
-        html.P("A test bed for the StylePro visual style editor (v0.2.0)."),
+        html.P("A test bed for the StylePro visual style editor."),
 
         html.Hr(),
 

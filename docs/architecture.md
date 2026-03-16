@@ -11,7 +11,8 @@ Browser (JS)          Python (Server-side)
 +-----------------+   +-------------------+
 | Editor JS       |   | Integration Layer |
 | (editor.js,     |<->| (streamlit.py,    |
-|  color_picker)  |   |  base.py)         |
+|  color_picker)  |   |  dash.py,         |
+|                 |   |  base.py)         |
 +-----------------+   +-------------------+
         |                      |
         v                      v
@@ -47,7 +48,67 @@ Themes render as CSS custom properties injected once into the document. The JS e
 
 ### Per-Component Targeting via data-sp-id
 
-The JS `ElementIdentifier` computes a deterministic ID from each element's DOM path (tag name, depth, sibling index) and assigns it as `data-sp-id` on hover. Per-component styles are scoped to that selector in the theme. This requires zero changes to the developer's app code.
+The JS `ElementIdentifier` assigns a deterministic `data-sp-id` attribute to
+every element that the user hovers over (lazy, on first hover) and to every
+element in a bulk seed pass that runs after the initial page render.
+
+#### ID scheme — global document order, `tag-N` format
+
+An element's ID is constructed as:
+
+```
+<lowercase-tag-name>-<zero-based-count>
+```
+
+where the count is the element's position among all elements of the same tag
+name in document order, counting from zero.
+
+Examples: `button-0` (first `<button>`), `div-3` (fourth `<div>`), `p-12`.
+
+Two groups are excluded from the count:
+
+- **StylePro's own overlay** — the element with `id="sp-overlay-host"` and all
+  its descendants.  Excluding the overlay prevents its internal elements from
+  shifting the count of app elements.
+- **Streamlit's header toolbar** — the element matching
+  `[data-testid="stHeader"]` and all its descendants.  Streamlit renders
+  navigation controls here that are not part of the app's content.
+
+#### Why this scheme
+
+- **Simple** — a single integer per tag, not a hash of the DOM path.
+- **Stable** — for the same app code, Streamlit (and Dash) always render the
+  same components in the same document order.  The same element therefore
+  receives the same ID on every page load, making saved CSS selectors
+  reliable across browser sessions and server restarts.
+- **Zero app-code changes** — developers do not need to add IDs or classes to
+  their widgets.
+
+#### Stability guarantee and its limits
+
+IDs are stable **as long as the app code does not change the set or order of
+rendered widgets**.  Adding, removing, or reordering widgets changes the
+document order and can shift counts for every subsequent element of the same
+tag.  In that case previously saved `[data-sp-id="..."]` selectors may target
+the wrong element.
+
+If you restructure your app or want to start fresh, delete the stale theme
+files:
+
+```bash
+rm .stylepro/themes/*.json .stylepro/active.txt
+```
+
+#### Bulk seeding on page load
+
+`_seedAllIds()` runs once after the framework finishes its initial render (via
+a 150 ms debounced `MutationObserver` in Streamlit; immediately after layout
+in Dash).  It walks `document.body.querySelectorAll("*")` in document order,
+skipping the overlay and header, and assigns `tag-N` IDs in a single O(n)
+pass.  This ensures that saved CSS selectors (which reference `data-sp-id`
+values) are already present in the DOM when the injected `<style>` block is
+parsed by the browser, so theme styles take effect immediately in the normal
+(non-edit) view — not only while hovering in edit mode.
 
 ### Role-Based Save Separation
 
@@ -221,10 +282,26 @@ Abstract `FrameworkIntegration` class defining the contract:
 
 #### Dash (`stylepro/integrations/dash.py`)
 
-Stub that raises `NotImplementedError` with clear message about v0.2 availability. Planned approach:
-- Use `app.index_string` to inject CSS/JS into the main HTML template
-- Register a `clientside_callback` for live CSS variable preview
-- Use a `dcc.Store` component for session state across callbacks
+`DashStylePro` implements the injection strategy for Dash apps. Key methods:
+
+- `from_config()` — factory with sensible defaults (JSONThemeStore, guest role, OS-assigned port)
+- `inject(app)` — starts the EditorServer (once, idempotent), registers Flask routes,
+  patches `app.index_string`.  Call once after creating the Dash app, before `app.run()`.
+- `_register_flask_routes(flask_server)` — adds two routes to the underlying Flask server:
+  - `GET /stylepro/editor.js` — serves `color_picker.js` + `editor.js` with
+    `window.STYLEPRO_CONFIG` embedded at the top. `Cache-Control: no-cache`.
+  - `GET /stylepro/theme.css` — serves the active theme's CSS custom properties.
+    Re-reads the store on each request so a newly saved theme is reflected on
+    the next full page load. `Cache-Control: no-cache`.
+- `_patch_index_string(app)` — modifies `app.index_string` to inject:
+  - `<link rel="stylesheet" href="/stylepro/theme.css">` before `{%css%}`
+  - `<script src="/stylepro/editor.js"></script>` after `{%scripts%}`
+
+Unlike the Streamlit integration, Dash does not rerun Python on every user
+interaction, so there is no per-request injection.  The EditorServer and Flask
+routes handle all dynamic content.  The editor JS communicates with the
+EditorServer directly for save operations, exactly as in the Streamlit
+integration.
 
 ## Security
 
