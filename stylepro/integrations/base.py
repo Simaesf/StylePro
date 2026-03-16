@@ -59,6 +59,12 @@ class FrameworkIntegration(ABC):
     def get_editor_html(self) -> str:
         """Return the <script> block containing config + editor JS."""
 
+    # Subclasses set this to identify the framework so the JS can adapt its
+    # editor-toggle UI (hamburger menu injection vs floating button).
+    # Default is "streamlit" so existing Streamlit behaviour is unchanged
+    # unless a subclass explicitly overrides it (e.g. DashStylePro uses "dash").
+    _FRAMEWORK: str = "streamlit"
+
     def _build_js_config(self) -> dict:
         """Assemble the window.STYLEPRO_CONFIG payload from runtime state."""
         active_theme = self.store.get_active()
@@ -71,6 +77,10 @@ class FrameworkIntegration(ABC):
             "secret_key": self.server.secret_key,
             "fab_position": self.config.get("fab_position", "bottom-right"),
             "css_var_prefix": self.config.get("css_var_prefix", "--sp"),
+            # Tells editor.js which toggle UI to use:
+            # "streamlit" → inject into hamburger menu
+            # anything else → floating action button (FAB)
+            "framework": self._FRAMEWORK,
         }
 
     def _js_config_script(self) -> str:

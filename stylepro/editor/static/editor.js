@@ -9,7 +9,7 @@
  *   CSSVariableManager  -- live CSS variable updates + sessionStorage
  *   ElementIdentifier   -- deterministic data-sp-id on hover
  *   EditOverlay         -- Shadow DOM: resize handles, move handle, color trigger
- *   MenuIntegration     -- inject "StylePro Editor" into Streamlit hamburger menu
+ *   MenuIntegration     -- toggle UI: hamburger menu (Streamlit) or FAB (Dash/other)
  *   MultiSelect         -- Ctrl+Click group selection + group drag
  *   StyleProEditor      -- activate / deactivate + event coordination
  *   SaveManager         -- POST to API + activate theme for permanent persistence
@@ -42,6 +42,7 @@
       // Only admin/developer can resize and move elements
       return this.isAdmin();
     },
+    framework: function () { return (this.get().framework || "unknown").toLowerCase(); },
   };
 
   // =========================================================================
@@ -644,22 +645,36 @@
   // =========================================================================
   // MenuIntegration
   // =========================================================================
-  // Instead of a floating purple FAB, inject a "StylePro Editor" option
-  // into Streamlit's native hamburger menu (top-right triple-dot menu).
+  // Provides a way to toggle the editor.
+  //
+  // Streamlit:  injects "StylePro Editor" into the native hamburger menu.
+  // Other frameworks (Dash, etc.):  shows a floating action button (FAB).
+  //
   // Only shown for admin role (developer option).
 
   var MenuIntegration = {
     _injected: false,
     _observer: null,
+    _fab: null,
 
     init: function () {
       if (this._injected) return;
       if (!ConfigReader.isAdmin()) return;
 
-      // Streamlit renders the menu lazily (on click). We use a
-      // MutationObserver to detect when the popover menu appears,
-      // then append our item.
+      if (ConfigReader.framework() === "streamlit") {
+        this._initStreamlitMenu();
+      } else {
+        this._initFAB();
+      }
+      this._injected = true;
+    },
+
+    // ------------------------------------------------------------------
+    // Streamlit: inject item into the hamburger popover menu.
+    // ------------------------------------------------------------------
+    _initStreamlitMenu: function () {
       var self = this;
+      // Streamlit renders the menu lazily (on click). Use MutationObserver.
       this._observer = new MutationObserver(function (mutations) {
         for (var i = 0; i < mutations.length; i++) {
           var added = mutations[i].addedNodes;
@@ -670,10 +685,40 @@
         }
       });
       this._observer.observe(document.body, { childList: true, subtree: true });
-
-      // Also try immediately in case menu is already open
       this._tryInject(document.body);
-      this._injected = true;
+    },
+
+    // ------------------------------------------------------------------
+    // Non-Streamlit: floating action button in the bottom-right corner.
+    // ------------------------------------------------------------------
+    _initFAB: function () {
+      if (document.getElementById("sp-fab")) return;
+      var btn = document.createElement("button");
+      btn.id = "sp-fab";
+      btn.title = "StylePro Editor";
+      btn.innerHTML = _pencilSvg("#ffffff", 18);
+      btn.style.cssText = [
+        "position:fixed", "bottom:24px", "right:24px", "z-index:2147483646",
+        "width:44px", "height:44px", "border-radius:50%",
+        "background:#6366f1", "border:none", "cursor:pointer",
+        "display:flex", "align-items:center", "justify-content:center",
+        "box-shadow:0 4px 12px rgba(99,102,241,0.4)",
+        "transition:background 0.2s, box-shadow 0.2s",
+      ].join(";");
+      btn.addEventListener("mouseenter", function () {
+        btn.style.background = "#4f46e5";
+        btn.style.boxShadow = "0 6px 16px rgba(99,102,241,0.5)";
+      });
+      btn.addEventListener("mouseleave", function () {
+        btn.style.background = btn.getAttribute("data-active") ? "#4f46e5" : "#6366f1";
+        btn.style.boxShadow = "0 4px 12px rgba(99,102,241,0.4)";
+      });
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        StyleProEditor.toggle();
+      });
+      document.body.appendChild(btn);
+      this._fab = btn;
     },
 
     _tryInject: function (root) {
@@ -743,6 +788,14 @@
     },
 
     updateLabel: function (active) {
+      // FAB: change colour and tooltip to reflect active state.
+      if (this._fab) {
+        this._fab.setAttribute("data-active", active ? "1" : "");
+        this._fab.style.background = active ? "#4f46e5" : "#6366f1";
+        this._fab.title = active ? "Exit StylePro Editor" : "StylePro Editor";
+        return;
+      }
+      // Streamlit hamburger: update injected menu item text.
       var items = document.querySelectorAll("#sp-menu-toggle span");
       for (var i = 0; i < items.length; i++) {
         items[i].textContent = active ? "Exit StylePro Editor" : "StylePro Editor";

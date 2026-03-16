@@ -59,6 +59,7 @@ _INJECTED_ATTR = "_stylepro_injected"
 
 
 class DashStylePro(FrameworkIntegration):
+    _FRAMEWORK = "dash"
     """
     StylePro integration for Dash apps.
 
